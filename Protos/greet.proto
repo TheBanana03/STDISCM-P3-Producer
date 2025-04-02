@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+option csharp_namespace = "GRPC_Test2";
+
+package greet;
+
+// The greeting service definition.
+service Greeter {
+  // Sends a greeting
+  rpc SayHello (HelloRequest) returns (HelloReply);
+}
+
+// The request message containing the user's name.
+message HelloRequest {
+  string name = 1;
+}
+
+// The response message containing the greetings.
+message HelloReply {
+  string message = 1;
+}
+
+message UploadVideoRequest {
+	VideoMetadata info = 1;
+	bytes chunk_size = 2;
+}
+
+message VideoMetadata {
+	string video_id = 1;
+	string filetype = 2;
+	string hash = 3;
+}
+
+message UploadVideoResponse {
+	string hash = 1;
+	uint32 size = 2;
+}
