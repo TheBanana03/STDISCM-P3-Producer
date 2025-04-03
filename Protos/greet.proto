@@ -11,7 +11,7 @@ service VideoService {
 
 message VideoChunk {
   oneof data {
-	  VideoMetadata metadata = 1;
+	  VideoMetadata vidMetadata = 1;
 	  ConfigContainer config = 2;
   }
 }
