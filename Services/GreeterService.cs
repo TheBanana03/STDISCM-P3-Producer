@@ -5,8 +5,10 @@ using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Grpc.Core;
+using Microsoft.AspNetCore.CookiePolicy;
 using VideoProto; // Import generated gRPC classes
 
 //Consumer thread class
@@ -14,25 +16,61 @@ public class ConsumerThread
 {
     //self-buffer
     private List<(int, byte[])> fileChunks;
-    private string? currentFile { get; set; }
-    private string? currentByteIndex { get; set; }
+    public string? currentFile { get; set; }
+    public int? currentChunkIndex { get; set; }
+    public int? totalChunks { get; set; }
     private bool isRunning { get; set; }
-    private bool fileCompleted { get; set; }
+    public bool fileCompleted { get; set; }
 
-    public ConsumerThread()
+    public ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks { get; set; }
+
+    public ConsumerThread(ConcurrentDictionary<string, List<(int, byte[])>> sharedChunks)
     {
         fileChunks = new List<(int, byte[])>();
         currentFile = null;
-        currentByteIndex = null;
+        currentChunkIndex = 0;
+        totalChunks = 0;
         isRunning = true;
         fileCompleted = false;
+        _fileChunks = sharedChunks;
     }
 
     public void runConsumer()
     {
-        while (isRunning)
+        while (this.isRunning)
         {
+            if (this.currentFile != null)
+            {
+                foreach (var file in _fileChunks)
+                {
+                    if(this.currentFile == file.Key)
+                    {
+                        //var fileName = file.Key;
+                        var sortedChunks = file.Value.OrderBy(c => c.Item1).Select(c => c.Item2).ToList();
+                        string outputPath = Path.Combine("UploadedVideos", this.currentFile);
 
+                        Directory.CreateDirectory("UploadedVideos");
+
+                        using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
+                        foreach (var chunk in sortedChunks)
+                        {
+                            fileStream.Write(chunk, 0, chunk.Length);
+                            this.currentChunkIndex++;
+                        }
+
+                        if (this.currentChunkIndex == this.totalChunks)
+                        {
+                            Console.WriteLine($"File {this.currentFile} assembled successfully.");
+                            _fileChunks.TryRemove(currentFile, out var removedList); //remove the file and all of its chunks
+                            //reset
+                            this.currentChunkIndex = 0;
+                            this.currentFile = null;
+                            this.totalChunks = 0;
+                        }
+                    }
+
+                }
+            }
         }
     }
 
@@ -41,16 +79,20 @@ public class ConsumerThread
 public class VideoConsumer : VideoService.VideoServiceBase
 {
     private readonly ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks = new();
-    private readonly List<string> assignedFiles = new List<string>();
+    private readonly List<(int, string)> assignedFiles = new List<(int, string)>();
     private readonly object _lock = new();
-    static private int maxBufferSize = 100;
-    private bool initialRun = true;
-
+    private bool initialRun = false;
 
     public override async Task<UploadResponse> UploadVideo(IAsyncStreamReader<VideoChunk> requestStream, 
                                                            IServerStreamWriter<UploadResponse> responseStream,
                                                            ServerCallContext context)
     {
+        ConsumerThread[] consumerThreads = new ConsumerThread[1];
+        Thread[] threadList = new Thread[1];
+        int maxBufferSize = 100;
+        consumerThreads[0] = new ConsumerThread(_fileChunks);
+        threadList[0] = new Thread(consumerThreads[0].runConsumer);
+        
         try
         {
             if (initialRun) { 
@@ -59,10 +101,15 @@ public class VideoConsumer : VideoService.VideoServiceBase
 
                 var chunk = requestStream.Current;
 
-                if(chunk.Config != null)
-                {
-                    //check if pThreads are higher than cThreads
-                }
+                ////readFromFile
+                //if(chunk.Config != null)
+                //{
+                //    //check if pThreads are higher than cThreads
+                //    if (chunk.Config.PThreads > )
+                //    {
+                        
+                //    }
+                //}
 
             }
             while (await requestStream.MoveNext(context.CancellationToken))
@@ -88,6 +135,18 @@ public class VideoConsumer : VideoService.VideoServiceBase
                         _fileChunks[chunk.Metadata.FileName].Add((chunk.Metadata.ChunkIndex, chunk.Metadata.Data.ToByteArray()));
 
                         Console.WriteLine($"Received chunk {chunk.Metadata.ChunkIndex}/{chunk.Metadata.TotalChunks} for {chunk.Metadata.FileName}");
+                        //assignment
+                        for (global::System.Int32 i = 0; i < consumerThreads.Length; i++)
+                        {
+                            if (assignedFiles.Any(tuple => tuple.Item2 == chunk.Metadata.FileName) && consumerThreads[i].currentFile == null)
+                            {
+                                //assign a file
+                                var actingThread = consumerThreads[i];
+                                actingThread.currentFile = chunk.Metadata.FileName;
+                                actingThread.totalChunks = chunk.Metadata.TotalChunks;
+                                assignedFiles.Add((i, chunk.Metadata.FileName));
+                            }
+                        }
                     }
                 }
             }
@@ -99,26 +158,4 @@ public class VideoConsumer : VideoService.VideoServiceBase
         }
     }
 
-    private void ProcessChunks()
-    {
-        lock (_lock)
-        {
-            foreach (var file in _fileChunks)
-            {
-                var fileName = file.Key;
-                var sortedChunks = file.Value.OrderBy(c => c.Item1).Select(c => c.Item2).ToList();
-                string outputPath = Path.Combine("UploadedVideos", fileName);
-
-                Directory.CreateDirectory("UploadedVideos");
-
-                using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-                foreach (var chunk in sortedChunks)
-                    fileStream.Write(chunk, 0, chunk.Length);
-
-                Console.WriteLine($"File {fileName} assembled successfully.");
-            }
-
-            _fileChunks.Clear(); // Cleanup after processing
-        }
-    }
 }
