@@ -1,4 +1,4 @@
-﻿using GRPC_Test2.Services;
+﻿using VideoProto;
 
 public class Startup
 {
@@ -20,7 +20,7 @@ public class Startup
         app.UseEndpoints(endpoints =>
         {
             // Map the gRPC service
-            endpoints.MapGrpcService<GreeterService>();
+            endpoints.MapGrpcService<VideoConsumer>();
 
             // Optional: A fallback for non-gRPC requests
             endpoints.MapGet("/", async context =>

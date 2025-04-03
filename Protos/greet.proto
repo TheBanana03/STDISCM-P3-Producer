@@ -1,37 +1,44 @@
 syntax = "proto3";
 
-option csharp_namespace = "GRPC_Test2";
+option csharp_namespace = "VideoProto";
 
-package greet;
+package video;
 
-// The greeting service definition.
-service Greeter {
-  // Sends a greeting
-  rpc SayHello (HelloRequest) returns (HelloReply);
+service VideoService {
+  rpc UploadVideo (stream VideoChunk) returns (stream UploadResponse);
+  rpc ConfigHandshake (VideoChunk) returns (ConfigContainer);
 }
 
-// The request message containing the user's name.
-message HelloRequest {
-  string name = 1;
-}
-
-// The response message containing the greetings.
-message HelloReply {
-  string message = 1;
-}
-
-message UploadVideoRequest {
-	VideoMetadata info = 1;
-	bytes chunk_size = 2;
+message VideoChunk {
+  oneof data {
+	  VideoMetadata metadata = 1;
+	  ConfigContainer config = 2;
+  }
 }
 
 message VideoMetadata {
-	string video_id = 1;
-	string filetype = 2;
-	string hash = 3;
+	bytes data = 1;       // Chunk data
+	string fileName = 2;  // Name of the video file
+	int32 chunkIndex = 3; // Chunk sequence index
+	int32 totalChunks = 4;// Total number of chunks
 }
 
-message UploadVideoResponse {
-	string hash = 1;
-	uint32 size = 2;
+message UploadResponse {
+	enum status {
+		OK = 0;
+		ERROR = 1;
+		WAIT = 2;
+		FULL = 3;
+		COMPLETE = 4;
+	}
+	status currStatus = 1;
+	VideoChunk currChunk = 3;
+}
+
+
+message ConfigContainer {
+	oneof data{
+		int32 pThreads = 1;
+		int32 cThreads = 2;
+	}
 }

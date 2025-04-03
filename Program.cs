@@ -1,4 +1,7 @@
-using GRPC_Test2.Services;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using VideoProto;
 
 namespace GRPC_Test2
 {
@@ -14,7 +17,7 @@ namespace GRPC_Test2
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
-            app.MapGrpcService<GreeterService>();
+            app.MapGrpcService<VideoConsumer>();
             app.MapGet("/", () => "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");
 
             app.Run();

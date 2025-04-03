@@ -1,50 +1,124 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 using Grpc.Core;
-using GRPC_Test2;
+using VideoProto; // Import generated gRPC classes
 
-namespace GRPC_Test2.Services
+//Consumer thread class
+public class ConsumerThread
 {
-    public class GreeterService : Greeter.GreeterBase
+    //self-buffer
+    private List<(int, byte[])> fileChunks;
+    private string? currentFile { get; set; }
+    private string? currentByteIndex { get; set; }
+    private bool isRunning { get; set; }
+    private bool fileCompleted { get; set; }
+
+    public ConsumerThread()
     {
-        private readonly ILogger<GreeterService> _logger;
-        public GreeterService(ILogger<GreeterService> logger)
+        fileChunks = new List<(int, byte[])>();
+        currentFile = null;
+        currentByteIndex = null;
+        isRunning = true;
+        fileCompleted = false;
+    }
+
+    public void runConsumer()
+    {
+        while (isRunning)
         {
-            _logger = logger;
+
         }
+    }
 
-        public override Task<HelloReply> SayHello(HelloRequest request, ServerCallContext context)
+}
+
+public class VideoConsumer : VideoService.VideoServiceBase
+{
+    private readonly ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks = new();
+    private readonly List<string> assignedFiles = new List<string>();
+    private readonly object _lock = new();
+    static private int maxBufferSize = 100;
+    private bool initialRun = true;
+
+
+    public override async Task<UploadResponse> UploadVideo(IAsyncStreamReader<VideoChunk> requestStream, 
+                                                           IServerStreamWriter<UploadResponse> responseStream,
+                                                           ServerCallContext context)
+    {
+        try
         {
-            return Task.FromResult(new HelloReply
-            {
-                Message = "Hello " + request.Name
-            });
-        }
+            if (initialRun) { 
+                //initialization
+                await requestStream.MoveNext(context.CancellationToken);
 
-        public override async Task<UploadVideoResponse> UploadFileStream(IAsyncStreamReader<UploadVideoRequest> request, ServerCallContext context)
-        {
-            try
-            {
-                var dir = "Files";
-                var fileName = "temp";
+                var chunk = requestStream.Current;
 
-                await using (var fs = System.IO.File.OpenWrite($"{dir}\\temp"))
+                if(chunk.Config != null)
                 {
-                    await foreach (var chunkMsg in request.ReadAllAsync().ConfigureAwait(false))
-                    {
-                        fileName = chunkMsg.Info;
-
-                        fs.Write(chunkMsg.Data.ToByteArray());
-                    }
+                    //check if pThreads are higher than cThreads
                 }
 
-                System.IO.File.Move($"{dir}\\temp", $"{dir}\\{fileName}", true);
-
-                _logger.LogDebug(@"[FileUploaded] 'Files\{FileName}' uploaded", fileName);
-                return new UploadFileResponse() { FilePath = $@"Files\{fileName}" };
             }
-            catch (Exception e)
+            while (await requestStream.MoveNext(context.CancellationToken))
             {
-                return new UploadFileResponse() { ErrorMessage = e.Message };
+                var chunk = requestStream.Current;
+                //stop sending
+                if (_fileChunks.Count >= maxBufferSize)
+                {
+                    //tells it that the buffer is full and that the currChunk was not stored
+                    //Chunk is resent as a countermeasure for dropped data
+                    await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Full, CurrChunk = chunk });
+                }
+                else
+                {
+                    await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Ok });
+
+                    lock (_lock)
+                    {
+                        if (!_fileChunks.ContainsKey(chunk.Metadata.FileName))
+                        {
+                            _fileChunks[chunk.Metadata.FileName] = new List<(int, byte[])>();
+                        }
+                        _fileChunks[chunk.Metadata.FileName].Add((chunk.Metadata.ChunkIndex, chunk.Metadata.Data.ToByteArray()));
+
+                        Console.WriteLine($"Received chunk {chunk.Metadata.ChunkIndex}/{chunk.Metadata.TotalChunks} for {chunk.Metadata.FileName}");
+                    }
+                }
             }
+            return new UploadResponse { CurrStatus = UploadResponse.Types.status.Complete };
+        }
+        catch (Exception ex)
+        {
+            return new UploadResponse { CurrStatus = UploadResponse.Types.status.Wait };
+        }
+    }
+
+    private void ProcessChunks()
+    {
+        lock (_lock)
+        {
+            foreach (var file in _fileChunks)
+            {
+                var fileName = file.Key;
+                var sortedChunks = file.Value.OrderBy(c => c.Item1).Select(c => c.Item2).ToList();
+                string outputPath = Path.Combine("UploadedVideos", fileName);
+
+                Directory.CreateDirectory("UploadedVideos");
+
+                using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
+                foreach (var chunk in sortedChunks)
+                    fileStream.Write(chunk, 0, chunk.Length);
+
+                Console.WriteLine($"File {fileName} assembled successfully.");
+            }
+
+            _fileChunks.Clear(); // Cleanup after processing
         }
     }
 }
