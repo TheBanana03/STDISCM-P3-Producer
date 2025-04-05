@@ -23,6 +23,12 @@ message VideoMetadata {
   int32 totalChunks = 4;
 }
 
+message UploadConfig {
+    int32 producerThreadCount = 1;
+    int32 consumerThreadCount = 2;
+    int32 queueLength = 3;
+}
+
 message UploadResponse {
   enum status {
     OK = 0;

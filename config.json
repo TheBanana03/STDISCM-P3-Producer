@@ -1,0 +1,9 @@
+{
+  "ProducerSettings": {
+    "ThreadCount": 2
+  },
+  "ConsumerSettings": {
+    "ThreadCount": 2,
+    "QueueLength": 100
+  }
+}

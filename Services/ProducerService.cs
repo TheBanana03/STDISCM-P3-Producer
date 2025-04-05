@@ -16,13 +16,16 @@ namespace ProducerClass
 		private readonly int _chunkSize;
 		private readonly int _threadCount;
 		private readonly List<string> _inputFolders;
-
-		public VideoProducer(string grpcServerAddress, string rootDirectory, int threadCount, int chunkSize = 1024 * 1024)
+		private readonly int _consumerThreadCount;
+		private readonly int _queueLength;
+		public VideoProducer(string grpcServerAddress, string rootDirectory, int threadCount, int consumerThreadCount, int queueLength, int chunkSize = 1024 * 1024)
 		{
 			var channel = GrpcChannel.ForAddress(grpcServerAddress);
 			_client = new VideoService.VideoServiceClient(channel);
 			_threadCount = threadCount;
 			_chunkSize = chunkSize;
+			_consumerThreadCount = consumerThreadCount;
+			_queueLength = queueLength;
 
 			// Automatically find all subdirectories under root
 			_inputFolders = Directory.GetDirectories(rootDirectory).ToList();
@@ -42,6 +45,23 @@ namespace ProducerClass
 				Console.WriteLine("No producer folders found.");
 				return;
 			}
+
+			using var call = _client.UploadVideo();
+
+			var configMessage = new UploadConfig
+			{
+				ProducerThreadCount = _threadCount,
+				ConsumerThreadCount = _consumerThreadCount,
+				QueueLength = _queueLength
+			};
+
+			await call.RequestStream.WriteAsync(new VideoChunk
+			{
+				VidMetadata = new VideoMetadata
+				{
+					Data = Google.Protobuf.ByteString.CopyFromUtf8(configMessage.ToString()) // Send config as a string
+				}
+			});
 
 			// Run each folder in a separate thread to process its files
 			var tasks = _inputFolders.Select(async (folderPath, index) =>
