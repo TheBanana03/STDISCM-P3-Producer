@@ -11,39 +11,33 @@ service VideoService {
 
 message VideoChunk {
   oneof data {
-    VideoMetadata vidMetadata = 1;
-    ConfigContainer config = 2;
+	  VideoMetadata vidMetadata = 1;
+	  ConfigContainer config = 2;
   }
 }
 
 message VideoMetadata {
-  bytes data = 1;
-  string fileName = 2;
-  int32 chunkIndex = 3;
-  int32 totalChunks = 4;
-}
-
-message UploadConfig {
-    int32 producerThreadCount = 1;
-    int32 consumerThreadCount = 2;
-    int32 queueLength = 3;
+	bytes data = 1;       // Chunk data
+	string fileName = 2;  // Name of the video file
+	int32 chunkIndex = 3; // Chunk sequence index
+	int32 totalChunks = 4;// Total number of chunks
 }
 
 message UploadResponse {
-  enum status {
-    OK = 0;
-    ERROR = 1;
-    WAIT = 2;
-    FULL = 3;
-    COMPLETE = 4;
-  }
-  status currStatus = 1;
-  VideoChunk currChunk = 3;
+	enum status {
+		OK = 0;
+		ERROR = 1;
+		WAIT = 2;
+		FULL = 3;
+		COMPLETE = 4;
+		INIT = 5;
+	}
+	status currStatus = 1;
+	VideoChunk currChunk = 3;
 }
 
 message ConfigContainer {
-  oneof data {
-    int32 pThreads = 1;
-    int32 cThreads = 2;
-  }
+	int32 pThreads = 1;
+	int32 cThreads = 2;
+	int32 queueSize = 3;
 }

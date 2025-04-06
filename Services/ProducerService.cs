@@ -18,6 +18,8 @@ namespace ProducerClass
 		private readonly List<string> _inputFolders;
 		private readonly int _consumerThreadCount;
 		private readonly int _queueLength;
+		private readonly SemaphoreSlim _writeSemaphore = new SemaphoreSlim(1, 1); // Semaphore for serialized writes to RequestStream
+
 		public VideoProducer(string grpcServerAddress, string rootDirectory, int threadCount, int consumerThreadCount, int queueLength, int chunkSize = 1024 * 1024)
 		{
 			var channel = GrpcChannel.ForAddress(grpcServerAddress);
@@ -40,7 +42,7 @@ namespace ProducerClass
 			}
 		}
 
-		// DEFAULT method: each thread takes one folder and uploads all files in it
+		// Upload files with a serialized write to the RequestStream
 		public async Task UploadFileAsync()
 		{
 			if (_inputFolders.Count == 0)
@@ -51,23 +53,32 @@ namespace ProducerClass
 
 			using var call = _client.UploadVideo();
 
-			var configMessage = new UploadConfig
-			{
-				ProducerThreadCount = _threadCount,
-				ConsumerThreadCount = _consumerThreadCount,
-				QueueLength = _queueLength
-			};
-
+			// Send the initial config message before starting to send video chunks
 			await call.RequestStream.WriteAsync(new VideoChunk
 			{
-				VidMetadata = new VideoMetadata
+				Config = new ConfigContainer
 				{
-					Data = Google.Protobuf.ByteString.CopyFromUtf8(configMessage.ToString()) // Send config as a string
+					PThreads = _threadCount,
+					CThreads = _consumerThreadCount,
+					QueueSize = _queueLength
 				}
 			});
 
-			// Run each folder in a separate thread to process its files
-			var tasks = _inputFolders.Select(async (folderPath, index) =>
+			// Handshake with the consumer to ensure it's ready to process chunks
+			if (await call.ResponseStream.MoveNext())
+			{
+				var response = call.ResponseStream.Current;
+				if (response.CurrStatus != UploadResponse.Types.status.Init)
+				{
+					Console.WriteLine("Handshake failed!");
+					return;
+				}
+				Console.WriteLine("Handshake succeeded, starting upload...");
+			}
+
+			// Process folders concurrently, but serialize writes to the RequestStream
+			await Parallel.ForEachAsync(_inputFolders, new ParallelOptions { MaxDegreeOfParallelism = _threadCount },
+			async (folderPath, ct) =>
 			{
 				var supportedExtensions = new[] { ".mp4", ".mov", ".avi", ".mkv", ".webm" };
 
@@ -76,45 +87,25 @@ namespace ProducerClass
 					.Where(file => supportedExtensions.Contains(Path.GetExtension(file).ToLower()))
 					.ToList();
 
-				// Process files in the folder
 				foreach (var filePath in files)
 				{
-					await UploadSingleFileAsync(filePath);
+					await UploadSingleFileAsync(filePath, call);
 				}
 			});
 
-			// Wait for all tasks to complete
-			await Task.WhenAll(tasks);
+			// Complete the RequestStream after all uploads
+			await call.RequestStream.CompleteAsync();
 		}
 
-
-		// Upload one file in chunks with a per-thread queue for managing chunk uploads
-		private async Task UploadSingleFileAsync(string filePath)
+		// Upload one file in chunks with serialized writes
+		private async Task UploadSingleFileAsync(string filePath, AsyncDuplexStreamingCall<VideoChunk, UploadResponse> call)
 		{
 			try
 			{
-				using var call = _client.UploadVideo();
-
 				var fileName = Path.GetFileName(filePath);
 				var fileBytes = File.ReadAllBytes(filePath);
 				int totalChunks = (int)Math.Ceiling((double)fileBytes.Length / _chunkSize);
 
-				// A concurrent queue for managing chunks sent by this thread
-				var chunkQueue = new ConcurrentQueue<VideoChunk>();
-
-				// Listen for consumer feedback asynchronously
-				Task receivingTask = Task.Run(async () =>
-				{
-					await foreach (var bufferStatus in call.ResponseStream.ReadAllAsync())
-					{
-						Console.WriteLine($"Consumer Buffer Status: {bufferStatus.CurrStatus}");
-
-						// Simulate acknowledgment mechanism (e.g., consumer tells which chunk has been processed)
-						// For now, this could simply be a message, but you could add logic here to track which chunk is processed
-					}
-				});
-
-				// Chunk and send: enqueue chunks into the queue per thread
 				for (int i = 0; i < totalChunks; i++)
 				{
 					int offset = i * _chunkSize;
@@ -131,23 +122,23 @@ namespace ProducerClass
 					};
 
 					var chunk = new VideoChunk { VidMetadata = metadata };
-					chunkQueue.Enqueue(chunk);
 
-					// Simulate a "wait" for consumer acknowledgment before sending more chunks
-					if (chunkQueue.Count > 0)
+					await _writeSemaphore.WaitAsync();
+
+					try
 					{
-						// Here we just send the chunk immediately
 						await call.RequestStream.WriteAsync(chunk);
 						Console.WriteLine($"[Thread: {Thread.CurrentThread.ManagedThreadId}] Sent chunk {i + 1}/{totalChunks} for file {fileName}");
 					}
+					finally
+					{
+						_writeSemaphore.Release();
+					}
 				}
-
-				await call.RequestStream.CompleteAsync();
-				await receivingTask;
 			}
 			catch (Exception e)
 			{
-				Console.WriteLine($"Error uploading file {filePath}: {e.Message}");
+				Console.WriteLine($"Error uploading file {filePath}: {e.GetType().Name} - {e.Message}");
 			}
 		}
 	}
