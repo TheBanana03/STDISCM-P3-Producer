@@ -28,7 +28,10 @@ namespace ProducerClass
 			_queueLength = queueLength;
 
 			// Automatically find all subdirectories under root
-			_inputFolders = Directory.GetDirectories(rootDirectory).ToList();
+			_inputFolders = Enumerable.Range(0, _threadCount)
+							.Select(i => Path.Combine(rootDirectory, i.ToString()))
+							.Where(Directory.Exists)
+							.ToList();
 
 			Console.WriteLine($"Found {_threadCount} producer folders:");
 			foreach (var folder in _inputFolders)
