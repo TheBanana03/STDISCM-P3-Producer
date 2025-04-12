@@ -29,7 +29,7 @@ class Program
 		Console.WriteLine($"Queue Length: {queueLength}");
 
 		// Pass the config values to VideoProducer
-		VideoProducer producer = new VideoProducer("http://localhost:5001", rootFolder, producerThreadCount, consumerThreadCount, queueLength);
+		VideoProducer producer = new VideoProducer("http://192.168.50.112:5001", rootFolder, producerThreadCount, consumerThreadCount, queueLength);
 
 		await producer.UploadFileAsync();
 

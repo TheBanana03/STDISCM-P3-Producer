@@ -1,6 +1,6 @@
 {
   "ProducerSettings": {
-    "ThreadCount": 2
+    "ThreadCount": 4
   },
   "ConsumerSettings": {
     "ThreadCount": 2,
